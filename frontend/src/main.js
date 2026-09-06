@@ -19,8 +19,10 @@ class FlowPanel {
 		this._initialFullscreen = saved.fullscreen ?? true;
 
 		this._mount();
+		this._mountFloatingButton();
 		this._syncTheme();
 		this._registerShortcut();
+		this._registerRouteListener();
 
 		watch(this.store.sessionName, () => this._persist());
 	}
@@ -123,30 +125,90 @@ class FlowPanel {
 		});
 	}
 
+	_mountFloatingButton() {
+		this.fab = document.createElement("button");
+		this.fab.id = "flow-fab";
+		this.fab.setAttribute("aria-label", "Abrir Azor IA");
+		this.fab.setAttribute("title", "Azor IA (Ctrl+I)");
+		this.fab.innerHTML = `
+			<span class="flow-fab-icon">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z" />
+					<path d="M18.5 14l.95 2.55L22 17.5l-2.55.95L18.5 21l-.95-2.55L15 17.5l2.55-.95L18.5 14z" />
+				</svg>
+			</span>
+			<span class="flow-fab-label">Azor IA</span>
+		`;
+		this.fab.addEventListener("click", () => this.toggle());
+		document.body.appendChild(this.fab);
+		this._updateFabVisibility();
+	}
+
+	_updateFabVisibility() {
+		if (!this.fab) return;
+		if (this.visible) {
+			this.fab.classList.add("flow-fab-hidden");
+		} else {
+			this.fab.classList.remove("flow-fab-hidden");
+		}
+	}
+
+	_registerRouteListener() {
+		const checkRoute = () => {
+			if (!window.frappe || !frappe.get_route_str) return;
+			const route = frappe.get_route_str();
+			if (route === "flow" || route === "desk/flow" || route === "app/flow") {
+				this.setFullscreen(true);
+				this.show();
+			}
+		};
+
+		if (window.frappe && frappe.router) {
+			frappe.router.on("change", checkRoute);
+		}
+		setTimeout(checkRoute, 300);
+	}
+
 	show() {
 		this.visible = true;
 		this.root.style.transform = "translateX(0)";
 		this.store.restoreSession();
 		this._persist();
+		this._updateFabVisibility();
 	}
 
 	hide() {
 		this.visible = false;
 		this.root.style.transform = "translateX(100%)";
 		this._persist();
+		this._updateFabVisibility();
+
+		// Se o usuário fechar o painel enquanto estiver na rota dedicada do Flow, volta para o Desk
+		if (window.frappe && frappe.get_route_str) {
+			const route = frappe.get_route_str();
+			if (route === "flow" || route === "desk/flow" || route === "app/flow") {
+				frappe.set_route("");
+			}
+		}
 	}
 
 	toggle() {
 		this.visible ? this.hide() : this.show();
 	}
 
+	setFullscreen(val) {
+		const next = Boolean(val);
+		this.store.fullscreen.value = next;
+		this.root.style.width = next ? "100vw" : `${this._halfWidth}px`;
+		this._persist();
+		this._updateFabVisibility();
+	}
+
 	// Expand to the full viewport width, or restore the half-screen width. State
 	// lives in the store so the header icon tracks it reactively.
 	toggleFullscreen() {
 		const next = !this.fullscreen;
-		this.store.fullscreen.value = next;
-		this.root.style.width = next ? "100vw" : `${this._halfWidth}px`;
-		this._persist();
+		this.setFullscreen(next);
 	}
 
 	_persist() {
