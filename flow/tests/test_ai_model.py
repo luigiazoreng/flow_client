@@ -51,8 +51,16 @@ class TestModel(UnitTestCase):
 		with self.assertRaises(ValueError):
 			Model("Some Model", model_id="openai/gpt-4.1")
 
+	# `resolve_provider_credentials` é isolada de propósito: ela tem testes próprios,
+	# e sem isso este teste depende do estado do site. Num site que TEM um `Flow
+	# Provider` para o provedor do modelo — o estado normal de produção, e o que a
+	# tela de configuração do Azor IA cria — `Model.__init__` chama
+	# `frappe.get_doc("Flow Provider", ...)` também. Com `frappe.get_doc` mockado
+	# globalmente, essa segunda chamada recebia o mesmo `SimpleNamespace` de `Flow
+	# Model`, que não tem `extra_params`, e o teste estourava `AttributeError`.
+	@patch("flow.lib.model.resolve_provider_credentials", return_value={})
 	@patch("frappe.get_doc")
-	def test_init_from_doc_name(self, mock_get_doc):
+	def test_init_from_doc_name(self, mock_get_doc, _mock_creds):
 		mock_doc = SimpleNamespace(
 			enabled=1,
 			model_id="anthropic/claude-sonnet-4-6",
