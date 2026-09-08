@@ -74,7 +74,15 @@ const hovered = ref(false);
 		@mouseleave="hovered = false"
 	>
 		<template v-for="(item, i) in items" :key="item.id">
-			<MarkdownText v-if="item.kind === 'text'" :part="item.part" />
+			<!-- Only the live, last text part types itself out. A part that a later part
+			     already superseded, and every part of a reloaded conversation, renders at
+			     once -- the typing pace is for text that is still arriving, never for text
+			     that is merely being displayed again. -->
+			<MarkdownText
+				v-if="item.kind === 'text'"
+				:part="item.part"
+				:animate="message.pending && i === items.length - 1"
+			/>
 			<ConfirmCard
 				v-else-if="item.kind === 'confirm'"
 				:question="item.question"
