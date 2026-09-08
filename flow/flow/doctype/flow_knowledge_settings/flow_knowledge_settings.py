@@ -21,6 +21,7 @@ class FlowKnowledgeSettings(Document):
 		embedding_dimension: DF.Int
 		embedding_model: DF.Link | None
 		search_type: DF.Literal["Hybrid", "Vector"]
+		vision_model: DF.Link | None
 	# end: auto-generated types
 
 	def validate(self):

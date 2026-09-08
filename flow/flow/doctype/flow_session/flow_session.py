@@ -194,17 +194,44 @@ class FlowSession(Document):
 		return run
 
 	def _load_attachments(self, attachments: list[str] | None) -> list[dict[str, Any]]:
-		"""Validate and extract each attached file (errors surface before the run is created)."""
+		"""Validate and extract each attached file (errors surface before the run is created).
+
+		Images are partitioned out and described in a single batched vision call instead
+		of the per-file loop non-images use — that's the whole point of the batch: an
+		agent turn with 20 photos must cost one vision call, not twenty. Order of the
+		original `attachments` list is preserved in the result; only the extraction
+		strategy differs per file.
+		"""
 		from flow.flow.doctype.flow_session_attachment.flow_session_attachment import resolve_attachment
+		from flow.knowledge.vision import describe_images, render_aggregate_markdown
 
 		seen: set[str] = set()
-		resolved: list[dict[str, Any]] = []
+		files: list[str] = []
 		for file in attachments or []:
 			if file in seen:
 				continue
 			seen.add(file)
-			resolved.append(resolve_attachment(file))
-		return resolved
+			files.append(file)
+
+		resolved_by_file: dict[str, dict[str, Any]] = {}
+		image_files: list[str] = []
+		for file in files:
+			data = resolve_attachment(file)
+			resolved_by_file[file] = data
+			if data.get("is_image"):
+				image_files.append(file)
+
+		if image_files:
+			descriptions, aggregate = describe_images(image_files)
+			aggregate_markdown = render_aggregate_markdown(aggregate)
+			for i, file in enumerate(image_files):
+				data = resolved_by_file[file]
+				text = descriptions.get(file) or ""
+				if i == 0 and aggregate_markdown:
+					text = f"{text}\n\n{aggregate_markdown}" if text else aggregate_markdown
+				data["extracted_text"] = text
+
+		return [resolved_by_file[file] for file in files]
 
 	def _persist_turn(self, input: str, attachment_data: list[dict[str, Any]], run: str) -> None:
 		"""Persist this turn's user message (and the system message on the first turn) plus its

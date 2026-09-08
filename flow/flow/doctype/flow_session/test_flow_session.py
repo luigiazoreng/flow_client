@@ -376,6 +376,138 @@ class TestIndexRetrievalAttachments(IntegrationTestCase):
 		self.assertEqual(s.attachments[0].mode, "Inline")
 
 
+class TestLoadAttachmentsPartitioning(IntegrationTestCase):
+	"""_load_attachments must send images through the batched vision pass and leave
+	non-images on the original per-file resolve_attachment loop, then recombine them
+	in the caller's original order."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _session(self):
+		return frappe.get_doc({"doctype": "Flow Session"}).insert(ignore_permissions=True)
+
+	def test_non_image_only_never_calls_describe_images(self):
+		s = self._session()
+		resolved = {
+			"file": "F-TXT",
+			"file_name": "note.txt",
+			"file_size": 3,
+			"extracted_text": "hi",
+			"is_image": False,
+		}
+		with (
+			patch(
+				"flow.flow.doctype.flow_session_attachment.flow_session_attachment.resolve_attachment",
+				return_value=resolved,
+			),
+			patch("flow.knowledge.vision.describe_images") as describe,
+		):
+			result = s._load_attachments(["F-TXT"])
+		describe.assert_not_called()
+		self.assertEqual(result, [resolved])
+
+	def test_images_are_batched_into_a_single_describe_images_call(self):
+		s = self._session()
+
+		def fake_resolve(file):
+			return {
+				"file": file,
+				"file_name": f"{file}.jpg",
+				"file_size": 1,
+				"extracted_text": "",
+				"is_image": True,
+			}
+
+		with (
+			patch(
+				"flow.flow.doctype.flow_session_attachment.flow_session_attachment.resolve_attachment",
+				side_effect=fake_resolve,
+			),
+			patch(
+				"flow.knowledge.vision.describe_images",
+				return_value=({"F1": "Sala ampla", "F2": "Cozinha nova"}, {}),
+			) as describe,
+		):
+			result = s._load_attachments(["F1", "F2"])
+		describe.assert_called_once_with(["F1", "F2"])
+		self.assertEqual(result[0]["extracted_text"], "Sala ampla")
+		self.assertEqual(result[1]["extracted_text"], "Cozinha nova")
+
+	def test_aggregate_markdown_lands_on_first_image_row_only(self):
+		s = self._session()
+
+		def fake_resolve(file):
+			return {"file": file, "file_name": file, "file_size": 1, "extracted_text": "", "is_image": True}
+
+		with (
+			patch(
+				"flow.flow.doctype.flow_session_attachment.flow_session_attachment.resolve_attachment",
+				side_effect=fake_resolve,
+			),
+			patch(
+				"flow.knowledge.vision.describe_images",
+				return_value=({"F1": "Sala", "F2": "Cozinha"}, {"tipo_sugerido": "Apartamento"}),
+			),
+		):
+			result = s._load_attachments(["F1", "F2"])
+		self.assertIn("## Resumo do conjunto", result[0]["extracted_text"])
+		self.assertIn("Sala", result[0]["extracted_text"])
+		self.assertNotIn("## Resumo do conjunto", result[1]["extracted_text"])
+		self.assertEqual(result[1]["extracted_text"], "Cozinha")
+
+	def test_mixed_images_and_files_preserve_original_order(self):
+		s = self._session()
+
+		def fake_resolve(file):
+			if file == "TXT":
+				return {
+					"file": "TXT",
+					"file_name": "note.txt",
+					"file_size": 2,
+					"extracted_text": "hi",
+					"is_image": False,
+				}
+			return {"file": file, "file_name": file, "file_size": 1, "extracted_text": "", "is_image": True}
+
+		with (
+			patch(
+				"flow.flow.doctype.flow_session_attachment.flow_session_attachment.resolve_attachment",
+				side_effect=fake_resolve,
+			),
+			patch(
+				"flow.knowledge.vision.describe_images",
+				return_value=({"IMG1": "Fachada"}, {}),
+			),
+		):
+			result = s._load_attachments(["IMG1", "TXT"])
+		self.assertEqual([r["file"] for r in result], ["IMG1", "TXT"])
+		self.assertEqual(result[0]["extracted_text"], "Fachada")
+		self.assertEqual(result[1]["extracted_text"], "hi")
+
+	def test_duplicate_files_in_input_are_deduped(self):
+		s = self._session()
+		resolved = {
+			"file": "F-TXT",
+			"file_name": "note.txt",
+			"file_size": 3,
+			"extracted_text": "hi",
+			"is_image": False,
+		}
+		with patch(
+			"flow.flow.doctype.flow_session_attachment.flow_session_attachment.resolve_attachment",
+			return_value=resolved,
+		) as resolve:
+			result = s._load_attachments(["F-TXT", "F-TXT"])
+		self.assertEqual(len(result), 1)
+		resolve.assert_called_once_with("F-TXT")
+
+	def test_no_attachments_returns_empty_list(self):
+		s = self._session()
+		self.assertEqual(s._load_attachments(None), [])
+		self.assertEqual(s._load_attachments([]), [])
+
+
 class TestAttachmentCleanup(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
