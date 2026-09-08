@@ -41,9 +41,22 @@ const items = computed(() => {
 	return out;
 });
 
-// Standalone "Thinking…" only until the first response part arrives; later thinking
-// shows inline as the activity group's label.
-const showWorking = computed(() => props.message.pending && !props.message.parts.length);
+// Standalone "Thinking…" fills every gap where nothing else on screen is already
+// live: before the first part arrives, and again any time the message is pending
+// but the last rendered item isn't a running activity group. Without the second
+// case, the indicator vanished the instant the first part landed and never came
+// back -- so "tool finished, next tool call or text not sent yet" (the model
+// thinking, or the server building the next event) rendered as a bare gap. The
+// only item that already shows its own live state is a trailing "activity" block
+// (its shimmer covers "tool running" *and* "between tools" -- see ActivityGroup);
+// every other last-item kind (text just finished, or an approval/confirm card
+// that isn't actively awaiting the user) needs this fallback.
+const lastItem = computed(() => items.value[items.value.length - 1]);
+const showWorking = computed(() => {
+	if (!props.message.pending) return false;
+	if (!lastItem.value) return true;
+	return lastItem.value.kind !== "activity" && lastItem.value.kind !== "confirm";
+});
 
 // Thumbs only on finished turns that map to a run (not pending, not awaiting approval).
 const showFeedback = computed(
@@ -76,7 +89,7 @@ const hovered = ref(false);
 			/>
 		</template>
 
-		<WorkingIndicator v-if="showWorking" />
+		<WorkingIndicator v-if="showWorking" :photo-count="message.pendingPhotoCount || 0" />
 		<FeedbackBar v-if="showFeedback" :message="message" :hovered="hovered" />
 	</div>
 </template>

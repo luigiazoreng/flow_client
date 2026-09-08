@@ -3,16 +3,30 @@ import { ref, watch, onUnmounted } from "vue";
 import { markdownToHTML } from "frappe-ui/src/utils/markdown";
 
 // Renders streamed assistant text as markdown. Parsing the full accumulated
-// string is O(n), so per-token would be O(n²); throttle to one parse per
-// THROTTLE_MS with a guaranteed trailing parse. The model's output is
-// untrusted, so the produced HTML is sanitized before injection.
+// string is O(n), so per-token would be O(n²); throttle full re-parses to one
+// per THROTTLE_MS with a guaranteed trailing parse. That alone leaves the text
+// visibly stepping in ~100ms chunks, which is what read as "frames" rather
+// than typing. Between full parses, the *tail* -- the bit of raw text that
+// arrived after the last parse and hasn't been through the parser yet -- is
+// appended as plain escaped text on every token, at O(tail length) instead of
+// O(whole message). That's cheap because the tail is always short: it only
+// ever holds up to THROTTLE_MS worth of streamed tokens. The next full parse
+// re-parses the whole string (tail included) as real markdown and the plain
+// tail node is cleared, so formatting inside the tail (a bold that just
+// closed, a list item) still resolves correctly a moment later -- it just
+// renders as plain text for one throttle window first.
+// The model's output is untrusted, so the produced HTML is sanitized before
+// injection; the plain tail goes through the same escaping either way.
 // Takes the whole part (not part.text) so only this component reacts per token.
 const props = defineProps({ part: { type: Object, required: true } });
 
 const THROTTLE_MS = 100;
 const html = ref("");
+const tail = ref("");
 let timer = 0;
 let last = 0;
+// Length of props.part.text already folded into `html` by the last full parse.
+let parsedLength = 0;
 
 // Tags markdown itself produces; anything else is dropped or unwrapped to text.
 const ALLOWED = new Set(
@@ -80,6 +94,8 @@ function render() {
 	timer = 0;
 	last = performance.now();
 	let raw = props.part.text || "";
+	parsedLength = raw.length;
+	tail.value = "";
 	// Close an unterminated fence so streamed code renders as a block, not raw text.
 	if ((raw.match(/```/g) || []).length % 2 === 1) raw += "\n```";
 
@@ -114,6 +130,12 @@ function render() {
 }
 
 function schedule() {
+	// Cheap per-token update: show whatever text hasn't been through a full parse yet,
+	// as plain text. O(tail length), not O(message length) -- the tail is capped at
+	// roughly one throttle window of streamed tokens, so this stays cheap all the way
+	// to the end of a long message, unlike re-parsing the accumulated string would.
+	tail.value = (props.part.text || "").slice(parsedLength);
+
 	// A pending timer will read the freshest text when it fires, so coalesce.
 	if (timer) return;
 	const elapsed = performance.now() - last;
@@ -131,4 +153,18 @@ onUnmounted(() => timer && clearTimeout(timer));
 
 <template>
 	<div class="md" v-html="html"></div>
+	<!-- The not-yet-parsed tail: plain escaped text, appended as its own block so a
+	     streaming token shows up immediately without waiting for the next full parse.
+	     Kept as a sibling (not injected into `html`) so it can never be mistaken for
+	     sanitized markup and so `.md > *:first-child/:last-child` above keep matching
+	     the actual parsed blocks, not this wrapper. -->
+	<p v-if="tail" class="md md-tail">{{ tail }}</p>
 </template>
+
+<style scoped>
+.md-tail {
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+</style>

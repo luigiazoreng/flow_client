@@ -3,7 +3,7 @@ import * as api from "@/api/client";
 import { startRun, resumeRun } from "@/api/stream";
 import { normalizeToolName } from "@/lib/toolMeta";
 import { readPanelState } from "@/lib/panelState";
-import { resizeImageFile } from "@/lib/imageResize";
+import { resizeImageFile, isImageFile } from "@/lib/imageResize";
 import { __ } from "@/lib/translate";
 import { showAlert } from "@/lib/frappeCompat";
 
@@ -282,7 +282,17 @@ async function send(text) {
 	attachments.value = [];
 
 	messages.value.push({ id: nextId(), role: "user", content: text, attachments: chips });
-	const assistant = pushAssistant();
+	// Photos attached this turn go through a vision pass before the run even starts
+	// (FlowSession.chat loads attachments before create_run), which alone can take over
+	// 20s for a full batch. No SSE event exists yet at that point -- the fetch is still
+	// open and the stream hasn't started -- so the client has to say something from what
+	// it already knows (how many photos it just sent) instead of showing nothing until
+	// the first event arrives. Counted from the chips' file names (by this point `a.file`
+	// is the server-side File doc name, a string -- not the browser File object anymore,
+	// so `isImageFile` is given a name-only stand-in), so a mixed batch (a PDF alongside
+	// photos) doesn't overclaim "analyzing photos".
+	const photoCount = chips.filter((c) => isImageFile({ name: c.file_name })).length;
+	const assistant = pushAssistant(true, photoCount);
 	sending.value = true;
 	abortController = new AbortController();
 	requestScroll(true);
@@ -383,6 +393,9 @@ function answerQuestion(msg, question, answer) {
 }
 
 function handleEvent(event, msg) {
+	// Whatever this event is, the stream has now produced its first byte -- the
+	// pre-stream "analyzing N photos" placeholder (see `send`) has done its job.
+	msg.pendingPhotoCount = 0;
 	switch (event.type) {
 		case "run_started":
 			runName.value = event.name;
@@ -460,7 +473,7 @@ function approvalFromResult(result) {
 	return null;
 }
 
-function pushAssistant(pending = true) {
+function pushAssistant(pending = true, pendingPhotoCount = 0) {
 	const msg = {
 		id: nextId(),
 		role: "assistant",
@@ -469,6 +482,9 @@ function pushAssistant(pending = true) {
 		questions: [],
 		runName: null,
 		feedback: null,
+		// >0 only for the window between submitting a turn with photos and the first
+		// SSE event of its run; see `send` and `handleEvent`.
+		pendingPhotoCount,
 	};
 	messages.value.push(msg);
 	// Return the reactive proxy, not the raw object — streaming mutates this after
