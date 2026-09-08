@@ -3,6 +3,7 @@ import { ref, computed, nextTick } from "vue";
 import { Button, FeatherIcon } from "@/lib/ui";
 import { useStore } from "@/store";
 import { __ } from "@/lib/translate";
+import { showAlert } from "@/lib/frappeCompat";
 
 const props = defineProps({
 	message: { type: Object, required: true },
@@ -54,10 +55,10 @@ async function submit(value, text = "") {
 	try {
 		const result = await submitFeedback(props.message, value, text);
 		if (result?.memory) {
-			frappe.show_alert({ message: __("Saved to agent memory."), indicator: "green" });
+			showAlert({ message: __("Saved to agent memory."), indicator: "green" });
 		}
 	} catch (e) {
-		frappe.show_alert({
+		showAlert({
 			message: e?.message || __("Could not save feedback."),
 			indicator: "red",
 		});

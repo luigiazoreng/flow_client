@@ -1,5 +1,6 @@
 import { serverMessage } from "./client";
 import { __ } from "@/lib/translate";
+import { csrfToken } from "@/lib/frappeCompat";
 
 // Consumes the run SSE stream: POSTs the request, then parses `data:` blocks
 // and hands each decoded event to `onEvent`.
@@ -8,7 +9,7 @@ async function postStream(method, body, onEvent, signal) {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			"X-Frappe-CSRF-Token": frappe.csrf_token,
+			"X-Frappe-CSRF-Token": csrfToken(),
 		},
 		body: JSON.stringify({ ...body, stream: true }),
 		signal,

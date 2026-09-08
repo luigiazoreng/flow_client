@@ -9,7 +9,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 from werkzeug.wrappers import Response
 
-from flow.api import attach_file, recover_session, resume_run, start_run, submit_feedback
+from flow.api import attach_file, list_sessions, recover_session, resume_run, start_run, submit_feedback
 from flow.api.api import _parse_attachments
 from flow.lib.model import ChatResponse, Model, ToolCall
 from flow.memory import store as memory_store
@@ -619,6 +619,13 @@ def _ensure_user(email: str) -> str:
 	return email
 
 
+def _grant_role(email: str, role: str) -> None:
+	user = frappe.get_doc("User", email)
+	if not any(row.role == role for row in user.roles):
+		user.append("roles", {"role": role})
+		user.save(ignore_permissions=True)
+
+
 class TestParseAttachments(IntegrationTestCase):
 	def test_empty_values_return_empty_list(self):
 		for value in (None, "", [], "[]"):
@@ -846,3 +853,109 @@ class TestMemoryRunProvenance(IntegrationTestCase):
 			with self.assertRaises(RuntimeError):
 				start_run("go", agent=self.agent.name)
 		self.assertIsNone(frappe.flags.get("flow_run"))
+
+
+class TestListSessions(IntegrationTestCase):
+	"""The session list must be scoped to the caller BY THE SERVER.
+
+	The regression this guards against is not a privilege escalation — a System
+	Manager always had database permission on `Flow Session`. It's the panel's
+	sidebar quietly turning into a list of other people's private conversations,
+	each one clickable (`_assert_session_owner` admits anyone with `write`). A
+	broker's chat carries client names, prices and whatever else he types.
+
+	`test_system_manager_does_not_see_other_owners_session` is the one that matters:
+	remove the `owner` filter from `list_sessions` and it fails.
+	"""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.broker = _ensure_user("list-sessions-broker@example.com")
+		self.manager = _ensure_user("list-sessions-manager@example.com")
+		_grant_role(self.manager, "System Manager")
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _session_owned_by(self, user: str, title: str) -> str:
+		frappe.set_user(user)
+		name = (
+			frappe.get_doc({"doctype": "Flow Session", "title": title})
+			.insert(ignore_permissions=True)
+			.name
+		)
+		frappe.set_user("Administrator")
+		return name
+
+	def test_returns_own_sessions(self):
+		name = self._session_owned_by(self.broker, "Minha conversa")
+
+		frappe.set_user(self.broker)
+		names = [row["name"] for row in list_sessions()]
+
+		self.assertIn(name, names)
+
+	def test_system_manager_does_not_see_other_owners_session(self):
+		private = self._session_owned_by(self.broker, "CONVERSA PRIVADA DO CORRETOR")
+		own = self._session_owned_by(self.manager, "Conversa do gestor")
+
+		frappe.set_user(self.manager)
+		names = [row["name"] for row in list_sessions()]
+
+		# The manager reads every Flow Session row at the database level; the endpoint
+		# is what keeps the broker's out of his list.
+		self.assertNotIn(private, names)
+		self.assertIn(own, names)
+
+	def test_broker_does_not_see_managers_session(self):
+		managers = self._session_owned_by(self.manager, "Conversa do gestor")
+
+		frappe.set_user(self.broker)
+		self.assertNotIn(managers, [row["name"] for row in list_sessions()])
+
+	def test_query_filters_by_title_within_own_sessions(self):
+		wanted = self._session_owned_by(self.broker, "Apartamento Vila Mariana")
+		other = self._session_owned_by(self.broker, "Casa Moema")
+
+		frappe.set_user(self.broker)
+		names = [row["name"] for row in list_sessions(query="Vila")]
+
+		self.assertIn(wanted, names)
+		self.assertNotIn(other, names)
+
+	def test_query_does_not_reach_other_owners_sessions(self):
+		private = self._session_owned_by(self.broker, "Segredo do corretor")
+
+		frappe.set_user(self.manager)
+		self.assertEqual(list_sessions(query="Segredo"), [])
+
+	def test_like_wildcards_in_query_are_literal(self):
+		literal = self._session_owned_by(self.broker, "Desconto de 50% no aluguel")
+		other = self._session_owned_by(self.broker, "Casa Moema")
+
+		frappe.set_user(self.broker)
+		# Unescaped, "50%" would match anything starting with "50"; escaped, it only
+		# matches a literal percent sign.
+		names = [row["name"] for row in list_sessions(query="50%")]
+
+		self.assertIn(literal, names)
+		self.assertNotIn(other, names)
+
+	def test_trigger_sessions_are_excluded(self):
+		frappe.set_user(self.broker)
+		triggered = (
+			frappe.get_doc({"doctype": "Flow Session", "title": "Do trigger", "source": "Trigger"})
+			.insert(ignore_permissions=True)
+			.name
+		)
+
+		self.assertNotIn(triggered, [row["name"] for row in list_sessions()])
+
+	def test_limit_is_clamped_and_tolerates_junk(self):
+		frappe.set_user(self.broker)
+		# Comes off an HTTP request, so it arrives as a string — and must never be a
+		# way to pull the whole table.
+		self.assertLessEqual(len(list_sessions(limit="10")), 10)
+		self.assertLessEqual(len(list_sessions(limit=10_000)), 50)
+		self.assertLessEqual(len(list_sessions(limit="nonsense")), 15)

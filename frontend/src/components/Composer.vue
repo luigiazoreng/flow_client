@@ -29,14 +29,30 @@ const {
 	removeAttachment,
 } = useStore();
 
-// Backend (flow/boot.py) is the single source of truth for supported file types.
-const ACCEPT = computed(() =>
-	(frappe.boot.flow_supported_file_types || []).map((ext) => `.${ext}`).join(",")
-);
+// Backend (flow/boot.py) is the single source of truth for supported file types --
+// but `frappe.boot` is a Desk-only global (`extend_bootinfo`, read by desk.js on
+// login), never populated on `/crm` (docs/agente-chat.md, 4.1: `crm.py:get_boot()`
+// only fills in its own minimal dict, not the Desk's bootinfo). Outside the Desk,
+// fall back to no restriction: the picker shows every file type, and the server
+// (`flow.knowledge.extract.FILE_EXTENSIONS` via `attach_file`/`stage_attachment`)
+// still rejects anything unsupported -- the `accept` attribute is a UI hint, not a
+// security boundary, so an empty value here doesn't weaken anything.
+//
+// `image/*` is added unconditionally, on top of whatever extension list applies:
+// on several Android pickers, an `accept` built only from bare extensions
+// (`.jpg,.png,...`) hides the camera option entirely (4.2) -- a MIME wildcard is
+// what brings it back.
+const ACCEPT = computed(() => {
+	const extensions = (window.frappe?.boot?.flow_supported_file_types || [])
+		.map((ext) => `.${ext}`)
+		.join(",");
+	return [extensions, "image/*"].filter(Boolean).join(",");
+});
 
 const text = ref("");
 const el = ref(null);
 const fileInput = ref(null);
+const cameraInput = ref(null);
 const dragging = ref(false);
 
 const inputDisabled = computed(
@@ -65,6 +81,15 @@ function submit() {
 
 function pickFiles() {
 	fileInput.value?.click();
+}
+
+// Separate input from `pickFiles`/`fileInput` (docs/agente-chat.md, 4.2): a single
+// `<input type=file accept="image/*" capture>` forces the OS straight into the
+// camera, which is right for "take a photo of the unit now" but wrong for "attach
+// a PDF" or "pick photos already in the gallery" -- the general picker has to stay
+// available too, so this is an additional button, not a replacement.
+function openCamera() {
+	cameraInput.value?.click();
 }
 
 function onFilesPicked(e) {
@@ -154,6 +179,26 @@ watch(focusTick, () => nextTick(() => el.value?.focus()));
 				type="file"
 				multiple
 				:accept="ACCEPT"
+				class="hidden"
+				@change="onFilesPicked"
+			/>
+
+			<!-- camera (4.2): plain `accept` alone hides the camera option on several
+			     Android pickers -- a dedicated `capture="environment"` input goes
+			     straight to the back camera instead of the general file picker. -->
+			<button
+				class="flex h-6 w-6 items-center justify-center rounded text-ink-gray-6 hover:bg-surface-gray-2 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+				:disabled="inputDisabled"
+				:title="__('Take photo')"
+				@click="openCamera"
+			>
+				<FeatherIcon name="camera" class="h-3.5 w-3.5" />
+			</button>
+			<input
+				ref="cameraInput"
+				type="file"
+				accept="image/*"
+				capture="environment"
 				class="hidden"
 				@change="onFilesPicked"
 			/>

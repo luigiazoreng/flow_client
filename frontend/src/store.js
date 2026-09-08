@@ -5,6 +5,7 @@ import { normalizeToolName } from "@/lib/toolMeta";
 import { readPanelState } from "@/lib/panelState";
 import { resizeImageFile } from "@/lib/imageResize";
 import { __ } from "@/lib/translate";
+import { showAlert } from "@/lib/frappeCompat";
 
 // Module-singleton store: one panel instance, one source of truth. Components
 // import this and read/act on shared reactive state — no prop drilling.
@@ -73,7 +74,7 @@ async function loadInitial() {
 		if (readPanelState().open) await restoreSession();
 	} catch {
 		// `loaded` stays false, keeping the composer disabled on "Loading…".
-		frappe.show_alert({
+		showAlert({
 			message: __("Flow failed to load. Refresh the page to retry."),
 			indicator: "red",
 		});

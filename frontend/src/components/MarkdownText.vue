@@ -1,5 +1,6 @@
 <script setup>
 import { ref, watch, onUnmounted } from "vue";
+import { markdownToHTML } from "frappe-ui/src/utils/markdown";
 
 // Renders streamed assistant text as markdown. Parsing the full accumulated
 // string is O(n), so per-token would be O(n²); throttle to one parse per
@@ -62,6 +63,19 @@ function sanitize(node) {
 	}
 }
 
+// Markdown -> raw (still untrusted) HTML, or null if no renderer would work, in which
+// case the caller falls back to escaped plain text. Never throws: this runs on every
+// throttled token of a live stream, on partial markdown, so a parser hiccup must degrade
+// the message rather than break the panel.
+function renderMarkdown(raw) {
+	try {
+		if (window.frappe?.markdown) return window.frappe.markdown(raw);
+		return markdownToHTML(raw);
+	} catch {
+		return null;
+	}
+}
+
 function render() {
 	timer = 0;
 	last = performance.now();
@@ -69,11 +83,25 @@ function render() {
 	// Close an unterminated fence so streamed code renders as a block, not raw text.
 	if ((raw.match(/```/g) || []).length % 2 === 1) raw += "\n```";
 
-	if (!window.frappe?.markdown) {
+	// `frappe.markdown` is a desk global; on `/crm` it doesn't exist (see
+	// lib/frappeCompat.js for why nothing under `window.frappe` does). Falling back to
+	// escaped plain text there was safe but wrong for this feature: `/crm` on a phone is
+	// the broker's MAIN surface, and the agent answers with publication plans, pending-field
+	// lists and suggested titles — exactly the structured content that markdown carries.
+	//
+	// `markdownToHTML` is frappe-ui's own helper (marked, gfm + breaks). No new dependency:
+	// frappe-ui is already a dependency of this app and declares `marked` itself; the CRM
+	// renders its own markdown through this same function.
+	//
+	// The desk keeps using `frappe.markdown` so desk rendering is unchanged. Either way the
+	// HTML is untrusted model output and goes through the same `sanitize` below — the source
+	// of the HTML is all that differs, never whether it is sanitized.
+	const rendered = renderMarkdown(raw);
+	if (rendered === null) {
 		html.value = escapeHtml(raw);
 		return;
 	}
-	const doc = new DOMParser().parseFromString(frappe.markdown(raw), "text/html");
+	const doc = new DOMParser().parseFromString(rendered, "text/html");
 	sanitize(doc.body);
 	// Let a wide table scroll in its own box instead of widening the panel.
 	for (const table of [...doc.body.querySelectorAll("table")]) {

@@ -2,6 +2,7 @@
 from flow.api.api import (
 	attach_file,
 	get_agent_tools,
+	list_sessions,
 	recover_session,
 	resume_run,
 	start_run,
@@ -12,6 +13,7 @@ from flow.api.api import (
 __all__ = [
 	"attach_file",
 	"get_agent_tools",
+	"list_sessions",
 	"recover_session",
 	"resume_run",
 	"start_run",
