@@ -250,8 +250,28 @@ if (window.frappe?.provide) {
 	frappe.provide("frappe.flow");
 }
 
+// Who is browsing, in any of the three contexts. `frappe.session` only exists in
+// the Desk; the `user_id` cookie is set by Frappe everywhere, including on pages
+// served to anonymous visitors (where it is literally "Guest").
+function currentUser() {
+	if (window.frappe?.session?.user) return frappe.session.user;
+	const match = document.cookie.match(/(?:^|;\s*)user_id=([^;]*)/);
+	return match ? decodeURIComponent(match[1]) : null;
+}
+
 function mountPanel() {
 	if (window.__flowPanelMounted) return;
+
+	// The bundle is injected on every website page (`web_include_js`) and on the
+	// CRM route (page_renderer) — the login page included. That was harmless while
+	// mounting waited on `app_ready`, a Desk-only signal that never fires there.
+	// Mounting on DOMContentLoaded reaches it, and the panel's first act is to load
+	// the session list: as Guest those calls are rejected and the login screen fills
+	// with "not whitelisted" errors. Bail before the flag is set, so a later
+	// legitimate mount on the same document is still possible.
+	const user = currentUser();
+	if (!user || user === "Guest") return;
+
 	window.__flowPanelMounted = true;
 	const panel = new FlowPanel();
 	if (window.frappe?.flow) frappe.flow.panel = panel;
