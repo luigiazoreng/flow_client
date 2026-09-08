@@ -163,6 +163,62 @@ def get_agent_tools(agent: str) -> dict[str, bool]:
 	return {row.slug: bool(row.requires_confirmation) for row in rows}
 
 
+SESSION_LIST_LIMIT = 50
+
+
+@frappe.whitelist()
+def list_sessions(query: str | None = None, limit: int | str = 15) -> list[dict[str, Any]]:
+	"""The caller's own chat sessions, most recently modified first.
+
+	Exists because scoping this list is the SERVER's job, not the caller's. The panel
+	used to build it with a raw `frappe.client.get_list` plus an `owner:
+	frappe.session.user` filter added client-side — which works only as long as the
+	client both knows who it is and bothers to ask. Neither holds:
+
+	- Outside the desk (the CRM SPA at `/crm`) there is no `frappe.session.user`
+	  global at all, so the client has nothing to filter with.
+	- `Flow Session` grants role "All" `if_owner`, but `System Manager` reads every
+	  row. So dropping the client-side filter doesn't just fail to scope the list for
+	  a manager — it turns their sidebar into a list of their brokers' private
+	  conversations, each one clickable (and `_assert_session_owner` lets anyone with
+	  `write` open it). Verified in the bench with two real users before this endpoint
+	  existed.
+
+	Filtering here, with `frappe.session.user` read on the server where it always
+	exists, closes both: the caller cannot widen the scope by omitting an argument,
+	because there is no argument for it.
+
+	`query` optionally filters by title (substring, case-insensitive per the DB
+	collation). Sessions started by a Trigger are excluded — they aren't conversations
+	the user had.
+	"""
+	try:
+		limit = int(limit)
+	except (TypeError, ValueError):
+		limit = 15
+	limit = max(1, min(limit, SESSION_LIST_LIMIT))
+
+	filters: dict[str, Any] = {
+		"owner": frappe.session.user,
+		"source": ["!=", "Trigger"],
+	}
+
+	query = (query or "").strip()
+	if query:
+		# Escape LIKE wildcards so a literal % or _ typed in the search box matches
+		# itself instead of "anything" — same reason the client used to do it.
+		escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+		filters["title"] = ["like", f"%{escaped}%"]
+
+	return frappe.get_all(
+		"Flow Session",
+		filters=filters,
+		fields=["name", "title", "modified"],
+		order_by="modified desc",
+		limit=limit,
+	)
+
+
 @frappe.whitelist()
 def attach_file(file: str) -> dict[str, Any]:
 	"""Validate and extract an uploaded File for use as a chat attachment. Errors

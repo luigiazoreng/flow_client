@@ -3,7 +3,9 @@ import * as api from "@/api/client";
 import { startRun, resumeRun } from "@/api/stream";
 import { normalizeToolName } from "@/lib/toolMeta";
 import { readPanelState } from "@/lib/panelState";
+import { resizeImageFile } from "@/lib/imageResize";
 import { __ } from "@/lib/translate";
+import { showAlert } from "@/lib/frappeCompat";
 
 // Module-singleton store: one panel instance, one source of truth. Components
 // import this and read/act on shared reactive state — no prop drilling.
@@ -72,7 +74,7 @@ async function loadInitial() {
 		if (readPanelState().open) await restoreSession();
 	} catch {
 		// `loaded` stays false, keeping the composer disabled on "Loading…".
-		frappe.show_alert({
+		showAlert({
 			message: __("Flow failed to load. Refresh the page to retry."),
 			indicator: "red",
 		});
@@ -157,7 +159,8 @@ function attachFiles(fileList) {
 
 async function uploadAndStage(f, item) {
 	try {
-		const uploaded = await api.uploadFile(f);
+		const resized = await resizeImageFile(f);
+		const uploaded = await api.uploadFile(resized);
 		const chip = await api.attachFile(uploaded.name);
 		item.file = chip.file;
 		item.file_name = chip.file_name;

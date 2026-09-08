@@ -22,6 +22,9 @@ export default {
 				// `[data-theme="dark"] …` → applies when the panel root is dark
 				// (its data-theme is synced to the desk in main.js).
 				if (/^\[data-theme/.test(selector)) return `${prefix}${selector}`;
+				// Selectors for floating action button #flow-fab must stay unscoped
+				if (selector.startsWith("#flow-fab") || selector.startsWith(".flow-fab"))
+					return selector;
 				// Document-level selectors collapse onto the panel root.
 				if (selector === "html" || selector === "body" || selector === ":host")
 					return prefix;

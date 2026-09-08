@@ -25,6 +25,17 @@ def _flow_panel_asset(filename: str) -> str:
 
 app_include_js = [_flow_panel_asset("flow_panel.js")]
 app_include_css = [_flow_panel_asset("flow_panel.css")]
+web_include_js = [_flow_panel_asset("flow_panel.js")]
+web_include_css = [_flow_panel_asset("flow_panel.css")]
+
+add_to_apps_screen = [
+	{
+		"name": "flow",
+		"logo": "/assets/flow/images/logo.svg",
+		"title": "Azor IA",
+		"route": "/desk/flow",
+	}
+]
 
 doc_events = {
 	"*": {

@@ -9,7 +9,12 @@ readme = "README.md"
 license = "AGPL-3.0-or-later"
 dynamic = ["version"]
 dependencies = [
-    "litellm>=1.83.0,<1.83.8",
+    # >=1.100 obrigatório: versões anteriores fixam `click==8.1.8`, e o frappe 16
+    # exige `Click~=8.4.1`. Instalar o flow ao lado do frappe rebaixava o click e
+    # quebrava o `bench` — e num deploy isso derruba o site inteiro, porque o
+    # container que roda `bench migrate` é dependência de todos os que servem
+    # tráfego. Da 1.100 em diante o pino é `click>=8.0.0,<9.0`, que convive.
+    "litellm>=1.100.0,<2",
     "lancedb<1,>=0.33",
     "python-docx<2,>=1.1",
     "pdfplumber<1,>=0.11",

@@ -11,7 +11,9 @@
   "section_break_chunking",
   "chunk_size",
   "column_break_chunking",
-  "chunk_overlap"
+  "chunk_overlap",
+  "section_break_vision",
+  "vision_model"
  ],
  "fields": [
   {
@@ -64,12 +66,25 @@
    "fieldtype": "Int",
    "label": "Chunk Overlap",
    "non_negative": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_vision",
+   "fieldtype": "Section Break",
+   "label": "Vision"
+  },
+  {
+   "description": "Flow Model used to describe chat image attachments in a single batched call (see flow.knowledge.vision). Should be a cheap vision-capable model, e.g. <code>anthropic/claude-haiku-4-5</code>. Not used by the file-extraction/OCR pipeline.",
+   "fieldname": "vision_model",
+   "fieldtype": "Link",
+   "label": "Vision Model",
+   "options": "Flow Model"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-11 00:00:00",
+ "modified": "2026-09-07 00:00:00",
  "modified_by": "Administrator",
  "module": "Flow",
  "name": "Flow Knowledge Settings",
