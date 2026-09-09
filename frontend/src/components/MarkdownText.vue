@@ -18,15 +18,50 @@ import { markdownToHTML } from "frappe-ui/src/utils/markdown";
 // The model's output is untrusted, so the produced HTML is sanitized before
 // injection; the plain tail goes through the same escaping either way.
 // Takes the whole part (not part.text) so only this component reacts per token.
-const props = defineProps({ part: { type: Object, required: true } });
+//
+// On top of that, what's *displayed* is decoupled from what has *arrived*. Making
+// rendering keep up with arrival was only half the problem: the model doesn't emit
+// one character at a time -- a single SSE delta carries several words -- so faithfully
+// following arrival still looks like bursts. `props.part.text` is therefore treated as
+// a queue, and a requestAnimationFrame loop drains it a few characters per frame, so
+// smoothness stops depending on how the network delivered the text.
+//
+// `animate` is what makes this safe to run at all: it's false for history reloads and
+// for any part that is no longer the live one, and it flips to false the moment the
+// turn ends or is stopped -- each of which flushes the queue instantly. Nobody ever
+// waits on an animation for text that already finished arriving.
+const props = defineProps({
+	part: { type: Object, required: true },
+	animate: { type: Boolean, default: false },
+});
 
 const THROTTLE_MS = 100;
+// Drain the backlog over this many frames, so the reveal rate scales with how much has
+// piled up: a long response is revealed faster than a short one, and the displayed text
+// can never trail arrival by more than roughly this many frames (~130ms at 60fps) no
+// matter how big the burst was. A fixed characters-per-frame rate would put a long
+// answer minutes behind the stream.
+const DRAIN_FRAMES = 8;
+const MIN_CHARS_PER_FRAME = 1;
+
 const html = ref("");
 const tail = ref("");
 let timer = 0;
 let last = 0;
-// Length of props.part.text already folded into `html` by the last full parse.
+// Length of the *revealed* text already folded into `html` by the last full parse.
 let parsedLength = 0;
+// How many characters of props.part.text the typing loop has revealed so far.
+let revealed = 0;
+let raf = 0;
+
+// Honoring the OS setting is the whole point of asking for it: reduced motion skips the
+// queue entirely and shows text as it arrives (still throttled/tailed, just not paced).
+// Read per turn rather than once at import so a mid-session change is picked up, and
+// guarded because `matchMedia` is absent in non-browser test contexts.
+const prefersReducedMotion = () =>
+	window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+
+const fullLength = () => (props.part.text || "").length;
 
 // Tags markdown itself produces; anything else is dropped or unwrapped to text.
 const ALLOWED = new Set(
@@ -93,7 +128,9 @@ function renderMarkdown(raw) {
 function render() {
 	timer = 0;
 	last = performance.now();
-	let raw = props.part.text || "";
+	// Only ever parse what the typing loop has revealed -- never the text still queued,
+	// which would defeat the pacing by printing the whole burst on the next parse.
+	let raw = (props.part.text || "").slice(0, revealed);
 	parsedLength = raw.length;
 	tail.value = "";
 	// Close an unterminated fence so streamed code renders as a block, not raw text.
@@ -129,26 +166,89 @@ function render() {
 	html.value = doc.body.innerHTML;
 }
 
-function schedule() {
-	// Cheap per-token update: show whatever text hasn't been through a full parse yet,
-	// as plain text. O(tail length), not O(message length) -- the tail is capped at
-	// roughly one throttle window of streamed tokens, so this stays cheap all the way
-	// to the end of a long message, unlike re-parsing the accumulated string would.
-	tail.value = (props.part.text || "").slice(parsedLength);
+// Paint what is currently revealed: the cheap path. The already-parsed prefix stays in
+// `html`; everything revealed since the last full parse goes out as the plain tail. Cost
+// is O(tail length) -- one frame's worth of characters plus at most one throttle window
+// -- not O(message length), so this stays cheap to the end of a long answer.
+function paint() {
+	tail.value = (props.part.text || "").slice(parsedLength, revealed);
 
-	// A pending timer will read the freshest text when it fires, so coalesce.
+	// A pending timer will read the freshest revealed text when it fires, so coalesce.
 	if (timer) return;
 	const elapsed = performance.now() - last;
 	if (elapsed >= THROTTLE_MS) render();
 	else timer = setTimeout(render, THROTTLE_MS - elapsed);
 }
 
+// One frame of typing: reveal a slice of the backlog, proportional to how much of it
+// there is, then paint. Re-arms itself only while there is still text queued.
+function tick() {
+	raf = 0;
+	const remaining = fullLength() - revealed;
+	if (remaining <= 0) return;
+
+	revealed += Math.max(MIN_CHARS_PER_FRAME, Math.ceil(remaining / DRAIN_FRAMES));
+	if (revealed > fullLength()) revealed = fullLength();
+	paint();
+
+	// requestAnimationFrame, not setInterval: it follows the device's refresh rate and
+	// suspends in a background tab, which matters on the broker's phone. A tab hidden
+	// mid-stream simply resumes -- and if the turn ended while hidden, `animate` already
+	// went false and flushed, so nothing is left half-typed.
+	if (revealed < fullLength()) raf = requestAnimationFrame(tick);
+}
+
+function stopLoop() {
+	if (raf) cancelAnimationFrame(raf);
+	raf = 0;
+}
+
+// Reveal everything now, without the queue, and still parse through the throttle. Used
+// when the pacing shouldn't apply at all: reduced motion, and history reloads.
+function revealAll() {
+	stopLoop();
+	revealed = fullLength();
+	paint();
+}
+
+// Terminal flush: the turn ended, was stopped, or this part is no longer the live one.
+// The queue is dropped and the final text parsed once, immediately -- no one waits on
+// an animation for a response that already finished.
+function flush() {
+	stopLoop();
+	if (timer) clearTimeout(timer);
+	timer = 0;
+	revealed = fullLength();
+	render();
+}
+
+function onText() {
+	if (!props.animate || prefersReducedMotion()) {
+		revealAll();
+		return;
+	}
+	if (!raf) raf = requestAnimationFrame(tick);
+}
+
 function escapeHtml(s) {
 	return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
-watch(() => props.part.text, schedule, { immediate: true });
-onUnmounted(() => timer && clearTimeout(timer));
+watch(() => props.part.text, onText, { immediate: true });
+// `animate` goes false on every terminal path there is -- run finished, error, user hit
+// stop, or a later part superseded this one -- so this single watcher is what guarantees
+// the queue is never left draining after the fact.
+watch(
+	() => props.animate,
+	(on) => {
+		if (on) onText();
+		else flush();
+	}
+);
+onUnmounted(() => {
+	stopLoop();
+	if (timer) clearTimeout(timer);
+});
 </script>
 
 <template>
