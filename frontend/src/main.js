@@ -24,6 +24,12 @@ class FlowPanel {
 		this._syncTheme();
 		this._registerShortcut();
 		this._registerRouteListener();
+		this._registerBackButton();
+		// A restored-open panel (from localStorage) never goes through show(),
+		// which is the normal place a history entry gets pushed — do it here so
+		// reloading with the chat already open still gives the Android back
+		// button something of ours to consume first.
+		if (this.visible) this._openHistoryEntry();
 
 		watch(this.store.sessionName, () => this._persist());
 	}
@@ -69,6 +75,31 @@ class FlowPanel {
 
 		this._addResizeHandle();
 		this._syncBodyScrollLock();
+		this._registerViewportTracking();
+	}
+
+	// `100dvh` fixes the box's *size* but not necessarily its *offset*: on mobile
+	// Chrome, a `position:fixed; top:0` element is pinned to the *layout*
+	// viewport, which doesn't move — it's the *visual* viewport (the part
+	// actually on screen) that shrinks and grows as the address bar collapses
+	// and expands. Mid-collapse, that can leave a gap between the box's top
+	// edge and the real top of the screen, carrying the header — and its close
+	// button — above the visible area. Confirmed against production: the
+	// `100dvh` fix alone (shipped earlier) did not stop this from being
+	// reported again, which is what motivated tracking `visualViewport`
+	// directly instead of trusting a CSS unit to cover both size and offset.
+	// Unsupported in a handful of old mobile browsers — silently falls back to
+	// the `100dvh`/`100vh` box set above, pinned to the layout viewport.
+	_registerViewportTracking() {
+		const vv = window.visualViewport;
+		if (!vv) return;
+		const sync = () => {
+			this.root.style.top = `${vv.offsetTop}px`;
+			this.root.style.height = `${vv.height}px`;
+		};
+		vv.addEventListener("resize", sync);
+		vv.addEventListener("scroll", sync);
+		sync();
 	}
 
 	// While the panel covers the whole screen (fullscreen — the default, and the
@@ -202,20 +233,24 @@ class FlowPanel {
 	}
 
 	show() {
+		if (this.visible) return;
 		this.visible = true;
 		this.root.style.transform = "translateX(0)";
 		this.store.restoreSession();
 		this._persist();
 		this._updateFabVisibility();
 		this._syncBodyScrollLock();
+		this._openHistoryEntry();
 	}
 
 	hide() {
+		if (!this.visible) return;
 		this.visible = false;
 		this.root.style.transform = "translateX(100%)";
 		this._persist();
 		this._updateFabVisibility();
 		this._syncBodyScrollLock();
+		this._closeHistoryEntry();
 
 		// Se o usuário fechar o painel enquanto estiver na rota dedicada do Flow, volta para o Desk
 		if (window.frappe && frappe.get_route_str) {
@@ -224,6 +259,67 @@ class FlowPanel {
 				frappe.set_route("");
 			}
 		}
+	}
+
+	// Opening the chat pushes one history entry marked `flowPanel`. Without
+	// this, the Android back gesture has nothing of ours to consume: it falls
+	// straight through to the browser's own history, which — if this was the
+	// first page loaded in the tab — closes the tab instead of the chat. This
+	// is the reported "back button closes the tab" behavior; nothing in this
+	// file touched `history` before.
+	_openHistoryEntry() {
+		if (this._historyOwned) return;
+		history.pushState({ flowPanel: true }, "");
+		this._historyOwned = true;
+	}
+
+	// Neutralizes our marker entry when the chat is closed some way OTHER than
+	// the back button (X button, Escape, route navigation).
+	//
+	// Skipped when `_closingFromPopstate` is set: the entry was already
+	// consumed by the actual back navigation that got us here.
+	//
+	// Uses `replaceState`, not `history.back()`: this can run in the same
+	// synchronous call as a route change the surrounding SPA fires right after
+	// (e.g. `frappe.set_route("")` below, when closing from the dedicated
+	// /flow page) — interleaving a `back()` with that SPA's own `pushState`
+	// could pop whichever entry happens to land on top by then, not
+	// necessarily ours. `replaceState` only overwrites the CURRENT entry, in
+	// place, without navigating or firing `popstate`, so it can't race
+	// anything else touching history. Trade-off: it doesn't remove the entry,
+	// only its `flowPanel` flag, so a chat opened and closed many times in one
+	// session leaves that many harmless dead entries — worst case, leaving the
+	// page afterward takes a couple of extra back presses. Far better than the
+	// bug this replaces.
+	_closeHistoryEntry() {
+		if (!this._historyOwned) return;
+		this._historyOwned = false;
+		if (this._closingFromPopstate) {
+			this._closingFromPopstate = false;
+			return;
+		}
+		if (history.state && history.state.flowPanel) {
+			history.replaceState(null, "");
+		}
+	}
+
+	// The chat lives inside SPAs (Desk, `/crm`) that do their own
+	// `pushState` for routing. `event.state.flowPanel` is only true while our
+	// marker is the current top of the history stack — if the user opened the
+	// chat, then navigated within the SPA (pushing a route on top), one back
+	// press lands back on our marker (`flowPanel` true, chat correctly stays
+	// open — only their in-app navigation got undone) and a second back press
+	// moves past it (`flowPanel` false or absent, chat closes). Checking
+	// `event.state` instead of "any popstate while visible" is what keeps this
+	// from closing the chat out from under someone who was just backing out of
+	// an unrelated in-app navigation.
+	_registerBackButton() {
+		window.addEventListener("popstate", (event) => {
+			if (!this.visible) return;
+			if (event.state && event.state.flowPanel) return;
+			this._closingFromPopstate = true;
+			this.hide();
+		});
 	}
 
 	toggle() {
