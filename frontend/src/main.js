@@ -43,13 +43,22 @@ class FlowPanel {
 			top: "0",
 			right: "0",
 			width: this.fullscreen ? "100vw" : `${this._halfWidth}px`,
+			// `100vh` on a mobile browser is the *layout* viewport, which is taller
+			// than what's actually visible once the address bar/toolbar are showing.
+			// A fixed-position box sized to it extends past the real screen, and any
+			// scroll of the page behind it (toolbar collapsing, keyboard opening) can
+			// carry the header above the fold. `100dvh` tracks the real visible height;
+			// this second assignment is ignored (keeping the 100vh fallback) on the
+			// handful of old mobile browsers that don't support it.
 			height: "100vh",
+			overscrollBehavior: "contain",
 			zIndex: "1040",
 			// A restored-open panel renders in place (no slide) so a refresh is seamless.
 			transform: this.visible ? "translateX(0)" : "translateX(100%)",
 			transition: "transform 0.22s ease",
 			boxShadow: "-2px 0 16px rgba(0, 0, 0, 0.08)",
 		});
+		this.root.style.height = "100dvh";
 		document.body.appendChild(this.root);
 
 		this.app = createApp(App, {
@@ -59,6 +68,22 @@ class FlowPanel {
 		this.app.mount(this.root);
 
 		this._addResizeHandle();
+		this._syncBodyScrollLock();
+	}
+
+	// While the panel covers the whole screen (fullscreen — the default, and the
+	// only realistic mode on a phone), the desk/CRM page behind it must not
+	// scroll. Left unlocked, a touch drag on what looks like empty panel margin
+	// (or the viewport resize when the on-screen keyboard opens) scrolls the
+	// underlying document instead, which drags this fixed-position panel's box
+	// along with it on some mobile browsers and pushes the header above the
+	// visible area — the "top buttons disappear" report. Only touched in
+	// fullscreen: the half-width desktop panel must still let the desk beside it
+	// scroll normally.
+	_syncBodyScrollLock() {
+		const lock = this.visible && this.fullscreen;
+		document.documentElement.style.overflow = lock ? "hidden" : "";
+		document.body.style.overflow = lock ? "hidden" : "";
 	}
 
 	// Thin grab strip on the panel's left edge. Dragging it changes the panel
@@ -84,6 +109,7 @@ class FlowPanel {
 			this._halfWidth = width;
 			// A manual resize takes the panel out of fullscreen; keep the header icon honest.
 			this.store.fullscreen.value = false;
+			this._syncBodyScrollLock();
 		};
 		const onUp = () => {
 			document.removeEventListener("mousemove", onMove);
@@ -181,6 +207,7 @@ class FlowPanel {
 		this.store.restoreSession();
 		this._persist();
 		this._updateFabVisibility();
+		this._syncBodyScrollLock();
 	}
 
 	hide() {
@@ -188,6 +215,7 @@ class FlowPanel {
 		this.root.style.transform = "translateX(100%)";
 		this._persist();
 		this._updateFabVisibility();
+		this._syncBodyScrollLock();
 
 		// Se o usuário fechar o painel enquanto estiver na rota dedicada do Flow, volta para o Desk
 		if (window.frappe && frappe.get_route_str) {
@@ -208,6 +236,7 @@ class FlowPanel {
 		this.root.style.width = next ? "100vw" : `${this._halfWidth}px`;
 		this._persist();
 		this._updateFabVisibility();
+		this._syncBodyScrollLock();
 	}
 
 	// Expand to the full viewport width, or restore the half-screen width. State
