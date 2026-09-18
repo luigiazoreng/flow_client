@@ -12,6 +12,9 @@ const { recentSessions, switchSession, newChat, fullscreen } = useStore();
 
 <template>
 	<header class="flex items-center gap-1.5 border-b border-outline-gray-1 px-3 py-2">
+	<div
+		class="flow-header sticky top-0 z-10 flex shrink-0 items-center gap-1.5 border-b border-outline-gray-1 bg-inherit px-3 py-2"
+	>
 		<BrandMark :size="18" />
 		<span class="text-sm font-medium text-ink-gray-9">{{ __("Azor IA") }}</span>
 		<span class="flex-1"></span>
@@ -41,4 +44,5 @@ const { recentSessions, switchSession, newChat, fullscreen } = useStore();
 			/></template>
 		</Button>
 	</header>
+	</div>
 </template>

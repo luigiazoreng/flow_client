@@ -100,6 +100,7 @@ onUnmounted(() => {
 	<div
 		ref="el"
 		class="flow-scrollbar flex flex-1 flex-col overflow-y-auto px-5 pt-4 pb-[calc(var(--flow-composer-h,104px)+24px)]"
+		class="flow-scrollbar flex flex-1 flex-col min-h-0 overflow-y-auto px-5 pt-4 pb-[calc(var(--flow-composer-h,104px)+24px)]"
 		@scroll="onScroll"
 	>
 		<div ref="content" class="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5">

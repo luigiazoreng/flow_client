@@ -18,6 +18,8 @@ class FlowPanel {
 		this._halfWidth = saved.width || PANEL_WIDTH;
 		// Fullscreen is the default mode; a saved preference wins on reload.
 		this._initialFullscreen = saved.fullscreen ?? true;
+		// Fullscreen is the default mode; on mobile, it is always forced to fullscreen.
+		this._initialFullscreen = this._isMobile() ? true : (saved.fullscreen ?? true);
 
 		this._mount();
 		this._mountFloatingButton();
@@ -34,8 +36,24 @@ class FlowPanel {
 		watch(this.store.sessionName, () => this._persist());
 	}
 
+	_isMobile() {
+		return window.innerWidth < 640 || Boolean(window.frappe?.is_mobile?.());
+	}
+
 	get fullscreen() {
 		return this.store.fullscreen.value;
+	}
+
+	_syncDimensions() {
+		const isMob = this._isMobile();
+		const isFull = isMob || this.fullscreen;
+		this.root.style.left = isFull ? "0" : "auto";
+		this.root.style.right = "0";
+		this.root.style.width = isFull ? "100%" : `${this._halfWidth}px`;
+		this.root.style.maxWidth = "100vw";
+		if (this._resizeHandle) {
+			this._resizeHandle.style.display = isMob || isFull ? "none" : "block";
+		}
 	}
 
 	_mount() {
@@ -49,6 +67,7 @@ class FlowPanel {
 			top: "0",
 			right: "0",
 			width: this.fullscreen ? "100vw" : `${this._halfWidth}px`,
+			overflow: "hidden",
 			// `100vh` on a mobile browser is the *layout* viewport, which is taller
 			// than what's actually visible once the address bar/toolbar are showing.
 			// A fixed-position box sized to it extends past the real screen, and any
@@ -65,6 +84,7 @@ class FlowPanel {
 			boxShadow: "-2px 0 16px rgba(0, 0, 0, 0.08)",
 		});
 		this.root.style.height = "100dvh";
+		this._syncDimensions();
 		document.body.appendChild(this.root);
 
 		this.app = createApp(App, {
@@ -76,6 +96,17 @@ class FlowPanel {
 		this._addResizeHandle();
 		this._syncBodyScrollLock();
 		this._registerViewportTracking();
+		this._registerWindowResize();
+	}
+
+	_registerWindowResize() {
+		window.addEventListener("resize", () => {
+			if (this._isMobile() && !this.fullscreen) {
+				this.store.fullscreen.value = true;
+			}
+			this._syncDimensions();
+			this._syncBodyScrollLock();
+		});
 	}
 
 	// `100dvh` fixes the box's *size* but not necessarily its *offset*: on mobile
@@ -96,6 +127,10 @@ class FlowPanel {
 		const sync = () => {
 			this.root.style.top = `${vv.offsetTop}px`;
 			this.root.style.height = `${vv.height}px`;
+			if (this._isMobile() || this.fullscreen) {
+				this.root.style.left = `${vv.offsetLeft || 0}px`;
+				this.root.style.width = `${vv.width}px`;
+			}
 		};
 		vv.addEventListener("resize", sync);
 		vv.addEventListener("scroll", sync);
@@ -113,6 +148,7 @@ class FlowPanel {
 	// scroll normally.
 	_syncBodyScrollLock() {
 		const lock = this.visible && this.fullscreen;
+		const lock = this.visible && (this.fullscreen || this._isMobile());
 		document.documentElement.style.overflow = lock ? "hidden" : "";
 		document.body.style.overflow = lock ? "hidden" : "";
 	}
@@ -122,6 +158,7 @@ class FlowPanel {
 	// doesn't clobber it.
 	_addResizeHandle() {
 		const handle = document.createElement("div");
+		this._resizeHandle = handle;
 		Object.assign(handle.style, {
 			position: "absolute",
 			top: "0",
@@ -130,10 +167,12 @@ class FlowPanel {
 			height: "100%",
 			cursor: "ew-resize",
 			zIndex: "10",
+			display: this._isMobile() || this.fullscreen ? "none" : "block",
 		});
 		this.root.appendChild(handle);
 
 		const onMove = (e) => {
+			if (this._isMobile()) return;
 			const max = window.innerWidth - 80;
 			const width = Math.min(max, Math.max(MIN_WIDTH, window.innerWidth - e.clientX));
 			this.root.style.width = `${width}px`;
@@ -150,6 +189,7 @@ class FlowPanel {
 			this._persist();
 		};
 		handle.addEventListener("mousedown", (e) => {
+			if (this._isMobile()) return;
 			e.preventDefault();
 			// Drop the width transition while dragging so it tracks the cursor.
 			this._savedTransition = this.root.style.transition;
@@ -328,8 +368,10 @@ class FlowPanel {
 
 	setFullscreen(val) {
 		const next = Boolean(val);
+		const next = this._isMobile() ? true : Boolean(val);
 		this.store.fullscreen.value = next;
 		this.root.style.width = next ? "100vw" : `${this._halfWidth}px`;
+		this._syncDimensions();
 		this._persist();
 		this._updateFabVisibility();
 		this._syncBodyScrollLock();
@@ -338,6 +380,10 @@ class FlowPanel {
 	// Expand to the full viewport width, or restore the half-screen width. State
 	// lives in the store so the header icon tracks it reactively.
 	toggleFullscreen() {
+		if (this._isMobile()) {
+			this.setFullscreen(true);
+			return;
+		}
 		const next = !this.fullscreen;
 		this.setFullscreen(next);
 	}
