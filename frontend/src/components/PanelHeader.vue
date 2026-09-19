@@ -11,7 +11,6 @@ const { recentSessions, switchSession, newChat, fullscreen } = useStore();
 </script>
 
 <template>
-	<header class="flex items-center gap-1.5 border-b border-outline-gray-1 px-3 py-2">
 	<div
 		class="flow-header sticky top-0 z-10 flex shrink-0 items-center gap-1.5 border-b border-outline-gray-1 bg-inherit px-3 py-2"
 	>
@@ -43,6 +42,5 @@ const { recentSessions, switchSession, newChat, fullscreen } = useStore();
 				><FeatherIcon name="x" :stroke-width="2" class="h-3.5 w-3.5"
 			/></template>
 		</Button>
-	</header>
 	</div>
 </template>
