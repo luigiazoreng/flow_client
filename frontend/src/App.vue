@@ -32,6 +32,7 @@ onUnmounted(() => observer?.disconnect());
 <template>
 	<div
 		ref="panel"
+		class="flow-panel relative flex h-full flex-col border-l border-outline-gray-2 bg-surface-white text-ink-gray-9"
 		class="flow-panel relative flex h-full flex-col overflow-hidden border-l border-outline-gray-2 bg-surface-white text-ink-gray-9"
 	>
 		<PanelHeader

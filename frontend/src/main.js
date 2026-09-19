@@ -147,6 +147,7 @@ class FlowPanel {
 	// fullscreen: the half-width desktop panel must still let the desk beside it
 	// scroll normally.
 	_syncBodyScrollLock() {
+		const lock = this.visible && this.fullscreen;
 		const lock = this.visible && (this.fullscreen || this._isMobile());
 		document.documentElement.style.overflow = lock ? "hidden" : "";
 		document.body.style.overflow = lock ? "hidden" : "";
@@ -366,8 +367,10 @@ class FlowPanel {
 	}
 
 	setFullscreen(val) {
+		const next = Boolean(val);
 		const next = this._isMobile() ? true : Boolean(val);
 		this.store.fullscreen.value = next;
+		this.root.style.width = next ? "100vw" : `${this._halfWidth}px`;
 		this._syncDimensions();
 		this._persist();
 		this._updateFabVisibility();
