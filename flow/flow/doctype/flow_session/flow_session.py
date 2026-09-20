@@ -483,21 +483,32 @@ def _row_to_message(row) -> dict[str, Any]:
 
 def _inject_inline_files(content: str | None, attachments: list[Any], budget: int) -> tuple[str, int]:
 	"""Append inline files' full text to a user message, clamped to the shared `budget`.
-	Returns the augmented content and the remaining budget."""
+	Returns the augmented content and the remaining budget.
+
+	The label carries both the human file name and the File doctype id: tools that act on an
+	attachment (e.g. azor_imoveis.agente.tools.anexar_fotos) take that id as their argument, and
+	the agent has no other way to learn it — it never appears in the visible chat text, only here.
+	Without it the agent has to guess an id (seen in production as a literal "file_1" that doesn't
+	exist) or ask the user for something they were never given."""
 	blocks = []
 	for a in attachments:
 		text, truncated = _clamp(a.extracted_text or "", budget)
 		budget -= len(text)
 		marker = _("\n\n[File truncated to fit the context window.]") if truncated else ""
-		blocks.append(f"--- File: {a.file_name} ---\n{text}{marker}\n--- End of file: {a.file_name} ---")
+		blocks.append(
+			f"--- File: {a.file_name} (id: {a.file}) ---\n{text}{marker}\n--- End of file: {a.file_name} ---"
+		)
 	body = f"{_('The user attached the following file(s):')}\n\n" + "\n\n".join(blocks)
 	return (f"{content}\n\n{body}" if content else body), budget
 
 
 def _note_retrieval_files(content: str | None, attachments: list[Any]) -> str:
 	"""Mark where large (retrieval-mode) files were attached, without their bulk. Their
-	relevant excerpts are injected on the latest turn rather than inline here."""
-	names = ", ".join(a.file_name for a in attachments)
+	relevant excerpts are injected on the latest turn rather than inline here.
+
+	Carries the File id alongside the name for the same reason as `_inject_inline_files`: it's
+	the only place in the prompt where a tool could pick it up."""
+	names = ", ".join(f"{a.file_name} (id: {a.file})" for a in attachments)
 	note = _("The user attached file(s) (large; relevant excerpts shown below): {0}").format(names)
 	return f"{content}\n\n{note}" if content else note
 

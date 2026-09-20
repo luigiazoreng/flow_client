@@ -137,8 +137,8 @@ class TestDeriveTitle(IntegrationTestCase):
 		self.assertEqual(derive_title(None), "")
 
 
-def _att(file_name="f.txt", extracted_text="", mode="Inline", run=None):
-	return SimpleNamespace(file_name=file_name, extracted_text=extracted_text, mode=mode, run=run)
+def _att(file_name="f.txt", extracted_text="", mode="Inline", run=None, file="f001"):
+	return SimpleNamespace(file_name=file_name, extracted_text=extracted_text, mode=mode, run=run, file=file)
 
 
 class TestAttachmentRouting(IntegrationTestCase):
@@ -175,6 +175,14 @@ class TestAttachmentInjection(IntegrationTestCase):
 		self.assertIn("FULLBODY", content)
 		self.assertIn("f.txt", content)
 		self.assertEqual(budget, 1000 - len("FULLBODY"))
+
+	def test_inline_exposes_the_real_file_id_a_tool_can_act_on(self):
+		# Regression: the agent has no other way to learn a File doctype id (it never appears in
+		# the visible chat text), so a tool call built from what the agent sees here — e.g.
+		# azor_imoveis.agente.tools.anexar_fotos(arquivos=[...]) — must be able to find it. Seen
+		# in production as the agent inventing "file_1" and asking the broker for "the file ID".
+		content, _ = _inject_inline_files("hi", [_att(file="47ca4befa3", extracted_text="x")], 1000)
+		self.assertIn("47ca4befa3", content)
 
 	def test_inline_truncates_over_budget_with_marker(self):
 		content, budget = _inject_inline_files("", [_att(extracted_text="X" * 100)], 10)
